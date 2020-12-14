@@ -63,7 +63,7 @@ local debian_pipeline(name, image,
     ],
 };
 
-// windows cross compile on alpine linux
+// windows cross compile
 local windows_cross_pipeline(name, image,
         arch='amd64',
         build_type='Release',
@@ -93,6 +93,50 @@ local windows_cross_pipeline(name, image,
                 'eatmydata ' + apt_get_quiet + ' install -y build-essential cmake git ninja-build pkg-config ccache g++-mingw-w64-x86-64-posix nsis zip',
                 'update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix',
                 'update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix',
+                'git clone https://github.com/despair86/libuv.git win32-setup/libuv',
+                'mkdir build',
+                'cd build',
+                'cmake .. -G Ninja -DCMAKE_CROSSCOMPILE=ON -DCMAKE_EXE_LINKER_FLAGS=-fstack-protector -DLIBUV_ROOT=$PWD/../win32-setup/libuv -DCMAKE_CXX_FLAGS=-fdiagnostics-color=always -DCMAKE_TOOLCHAIN_FILE=../contrib/cross/mingw'+toolchain+'.cmake -DCMAKE_BUILD_TYPE='+build_type+' ' +
+                    (if werror then '-DWARNINGS_AS_ERRORS=ON ' else '') +
+                    (if lto then '' else '-DWITH_LTO=OFF ') +
+                    "-DBUILD_STATIC_DEPS=ON -DDOWNLOAD_SODIUM=ON -DBUILD_PACKAGE=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -DNATIVE_BUILD=OFF -DSTATIC_LINK=ON" +
+                cmake_extra,
+                'ninja -v package',
+            ] + extra_cmds,
+        }
+    ],
+};
+
+// debug only 
+local win32_debug_pipeline(name, image,
+        arch='amd64',
+        build_type='Debug',
+        lto=false,
+        werror=false,
+        cmake_extra='',
+        toolchain='32',
+        extra_cmds=[],
+        allow_fail=false) = {
+    kind: 'pipeline',
+    type: 'docker',
+    name: name,
+    platform: { arch: arch },
+    trigger: { branch: { exclude: ['debian/*', 'ubuntu/*'] } },
+    steps: [
+        submodules,
+        {
+            name: 'build',
+            image: image,
+            [if allow_fail then "failure"]: "ignore",
+            environment: { SSH_KEY: { from_secret: "SSH_KEY" }, WINDOWS_BUILD_NAME: toolchain+"bit" },
+            commands: [
+                'echo "Building on ${DRONE_STAGE_MACHINE}"',
+                'echo "man-db man-db/auto-update boolean false" | debconf-set-selections',
+                apt_get_quiet + ' update',
+                apt_get_quiet + ' install -y eatmydata',
+                'eatmydata ' + apt_get_quiet + ' install -y build-essential cmake git ninja-build pkg-config ccache g++-mingw-w64-i686-posix nsis zip',
+                'update-alternatives --set i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix',
+                'update-alternatives --set i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix',
                 'git clone https://github.com/despair86/libuv.git win32-setup/libuv',
                 'mkdir build',
                 'cd build',
@@ -218,6 +262,10 @@ local mac_builder(name, build_type='Release', werror=true, cmake_extra='', extra
     // Windows builds (x64)
     windows_cross_pipeline("Windows (amd64)", "debian:testing",
         toolchain='64', extra_cmds=[
+          '../contrib/ci/drone-static-upload.sh'
+    ]),
+    win32_debug_pipeline("Windows (i686) DEBUG ONLY - DO NOT USE IN PROD - WE DO NOT SHIP 32-BIT OBJECTS", "debian:testing",
+        toolchain='32', extra_cmds=[
           '../contrib/ci/drone-static-upload.sh'
     ]),
 
